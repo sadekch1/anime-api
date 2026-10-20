@@ -53,59 +53,72 @@ jobs:
           result = ''
 
           with sync_playwright() as p:
-              browser = p.chromium.launch(headless=True)
-              # إضافة User-Agent حقيقي لتجنب حظر الحماية
+              # تشغيل المتصفح بإعدادات تتجاوز كشف أتمتة المتصفح
+              browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
               context = browser.new_context(
-                  user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+                  user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+                  viewport={'width': 1280, 'height': 720}
               )
               page = context.new_page()
 
               if action == 'search':
                   query = os.getenv('QUERY', '')
-                  url = f'https://animeblkom.net/search?query={urllib.parse.quote(query)}'
-                  print(f'البحث عن الرابط: {url}')
+                  search_url = f'https://animeblkom.net/search?query={urllib.parse.quote(query)}'
+                  print(f'البحث عن: {search_url}')
                   try:
-                      page.goto(url, timeout=60000)
-                      page.wait_for_timeout(6000) # انتظار تحميل محتوى JavaScript
-                      
-                      print(f'عنوان الصفحة: {page.title()}')
+                      page.goto(search_url, wait_until='domcontentloaded', timeout=60000)
+                      page.wait_for_timeout(5000)
                       
                       links = []
-                      # البحث عن جميع الروابط التي تحتوي على كلمة /anime/
-                      for el in page.query_selector_all('a'):
-                          href = el.get_attribute('href')
+                      # استخراج كافة الروابط التي تتضمن كلمة /anime/
+                      elements = page.query_selector_all('a[href*=\"/anime/\"]')
+                      for el in elements:
+                          href = el.get_attribute('href') or ''
                           text = el.inner_text().strip()
-                          if href and '/anime/' in href:
-                              slug = href.split('/anime/')[-1].strip('/')
-                              if slug and text and len(text) > 1:
-                                  links.append(f'{slug} | {text}')
+                          if '/anime/' in href:
+                              parts = [p for p in href.split('/') if p]
+                              if len(parts) >= 2:
+                                  slug = parts[-1]
+                                  # تجنب التكرار والعناوين الفارغة
+                                  if slug and text and len(text) > 1 and slug != 'anime':
+                                      links.append(f'{slug} | {text}')
                       
                       unique_links = list(dict.fromkeys(links))
-                      print(f'تم العثور على {len(unique_links)} نتيجة.')
-                      result = '\n'.join(unique_links)
+                      if unique_links:
+                          result = '\n'.join(unique_links)
+                      else:
+                          result = 'NO_RESULTS'
                   except Exception as e:
-                      result = f'Error: {str(e)}'
-                      print(result)
+                      result = f'ERROR: {str(e)}'
 
               elif action == 'watch':
                   slug = os.getenv('SLUG', '')
                   episode = os.getenv('EPISODE', '1')
-                  url = f'https://animeblkom.net/watch/{slug}/{episode}'
-                  print(f'جلب رابط الحلقة: {url}')
+                  watch_url = f'https://animeblkom.net/watch/{slug}/{episode}'
+                  print(f'جلب الحلقة من: {watch_url}')
                   try:
-                      page.goto(url, timeout=60000)
-                      page.wait_for_timeout(6000)
+                      page.goto(watch_url, wait_until='domcontentloaded', timeout=60000)
+                      page.wait_for_timeout(5000)
                       content = page.content()
                       
-                      bk_links = re.findall(r'https://bkvideo\.online/v[^\s\"<>]+', content)
-                      result = '\n'.join(list(set(bk_links)))
+                      # استخراج روابط التشغيل المباشرة
+                      bk_links = re.findall(r'https?://[^\s\"\'<>]+bkvideo[^\s\"\'<>]+', content)
+                      if not bk_links:
+                          bk_links = re.findall(r'https?://[^\s\"\'<>:]+\.mp4[^\s\"\'<>]*', content)
+                          
+                      unique_streams = list(set(bk_links))
+                      if unique_streams:
+                          result = '\n'.join(unique_streams)
+                      else:
+                          result = 'NO_STREAMS_FOUND'
                   except Exception as e:
-                      result = f'Error: {str(e)}'
+                      result = f'ERROR: {str(e)}'
 
               browser.close()
 
+          # حفظ النتيجة في الملف
           with open('api_result.txt', 'w', encoding='utf-8') as f:
-              f.write(result)
+              f.write(result.strip())
           "
 
       - name: Commit and Push Result
