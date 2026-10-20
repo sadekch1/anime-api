@@ -36,7 +36,7 @@ jobs:
           playwright install chromium
           playwright install-deps chromium
 
-      - name: Run Filtered Search Engine
+      - name: Run Strict Filtered Search Engine
         env:
           ACTION_TYPE: ${{ github.event.inputs.action }}
           QUERY: ${{ github.event.inputs.query }}
@@ -103,18 +103,8 @@ jobs:
                                           slug = parts[-1]
                                           text = a.inner_text().strip()
                                           
-                                          # شروط تنقية صارمة لمنع ظهور رموز الحماية أو الروابط الفارغة
-                                          is_valid_slug = (
-                                              slug 
-                                              and slug != 'anime' 
-                                              and slug != 'show' 
-                                              and '?' not in slug 
-                                              and '__cf' not in slug 
-                                              and 'cf_' not in slug
-                                              and len(slug) < 50
-                                          )
-                                          
-                                          if is_valid_slug:
+                                          # فلتر صارم للغاية: يسمح فقط بالحروف الأنجليزية، الأرقام والشرطات
+                                          if re.match(r'^[a-zA-Z0-9\-_]{2,40}$', slug):
                                               links.append(f'{slug} | {text or slug}')
                           except Exception as e:
                               print(f'Search error: {e}')
@@ -143,7 +133,7 @@ jobs:
                       
                       bk_links = re.findall(r'https?://[^\s\"\'<>]+bkvideo[^\s\"\'<>]+', content)
                       if not bk_links:
-                          bk_links = re.findall(r'https?://[^\s\"\'<>:]+\.mp4[^\s\"\'<>]*', content)
+                        bk_links = re.findall(r'https?://[^\s\"\'<>:]+\.mp4[^\s\"\'<>]*', content)
                           
                       unique_streams = list(set(bk_links))
                       if unique_streams:
@@ -165,5 +155,5 @@ jobs:
           git config --global user.name 'Anime Bot'
           git config --global user.email 'bot@github.com'
           git add api_result.txt
-          git commit -m "Update search with strict slug filtering" || exit 0
+          git commit -m "Update search with strict regex slug validation" || exit 0
           git push
