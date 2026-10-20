@@ -36,7 +36,7 @@ jobs:
           playwright install chromium
           playwright install-deps chromium
 
-      - name: Run Playwright Stealth Engine
+      - name: Run Filtered Search Engine
         env:
           ACTION_TYPE: ${{ github.event.inputs.action }}
           QUERY: ${{ github.event.inputs.query }}
@@ -45,7 +45,6 @@ jobs:
         run: |
           python -c "
           import os
-          import traceback
           import urllib.parse
           import re
           from playwright.sync_api import sync_playwright
@@ -103,7 +102,19 @@ jobs:
                                       if len(parts) >= 2:
                                           slug = parts[-1]
                                           text = a.inner_text().strip()
-                                          if slug and slug != 'anime' and slug != 'show':
+                                          
+                                          # شروط تنقية صارمة لمنع ظهور رموز الحماية أو الروابط الفارغة
+                                          is_valid_slug = (
+                                              slug 
+                                              and slug != 'anime' 
+                                              and slug != 'show' 
+                                              and '?' not in slug 
+                                              and '__cf' not in slug 
+                                              and 'cf_' not in slug
+                                              and len(slug) < 50
+                                          )
+                                          
+                                          if is_valid_slug:
                                               links.append(f'{slug} | {text or slug}')
                           except Exception as e:
                               print(f'Search error: {e}')
@@ -120,10 +131,8 @@ jobs:
                       watch_url = f'https://animeblkom.net/watch/{slug}/{episode}'
                       print(f'Fetching Watch URL with Playwright: {watch_url}')
                       
-                      # الانتقال للصفحة مع منح وقت كافٍ لتجاوز تحدي Cloudflare JS تلقائياً
                       page.goto(watch_url, timeout=60000)
                       
-                      # الانتظار الذكي حتى يتم حل التحدي وتحميل محتوى الصفحة الحقيقي
                       for _ in range(10):
                           content = page.content()
                           if '__cf_chl_jschl_tk__' not in content and 'Checking your browser' not in content:
@@ -132,7 +141,6 @@ jobs:
                       
                       content = page.content()
                       
-                      # استخراج روابط التشغيل المباشرة
                       bk_links = re.findall(r'https?://[^\s\"\'<>]+bkvideo[^\s\"\'<>]+', content)
                       if not bk_links:
                           bk_links = re.findall(r'https?://[^\s\"\'<>:]+\.mp4[^\s\"\'<>]*', content)
@@ -157,5 +165,5 @@ jobs:
           git config --global user.name 'Anime Bot'
           git config --global user.email 'bot@github.com'
           git add api_result.txt
-          git commit -m "Update watch engine with Playwright Stealth" || exit 0
+          git commit -m "Update search with strict slug filtering" || exit 0
           git push
