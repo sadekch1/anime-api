@@ -17,7 +17,6 @@ on:
         description: 'Episode number'
         required: false
 
-# هذه الصلاحية ضرورية جداً لمنع خطأ 403 وتسمح للبوت بتحديث الملفات
 permissions:
   contents: write
 
@@ -55,27 +54,38 @@ jobs:
 
           with sync_playwright() as p:
               browser = p.chromium.launch(headless=True)
-              page = browser.new_page()
+              # إضافة User-Agent حقيقي لتجنب حظر الحماية
+              context = browser.new_context(
+                  user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+              )
+              page = context.new_page()
 
               if action == 'search':
                   query = os.getenv('QUERY', '')
                   url = f'https://animeblkom.net/search?query={urllib.parse.quote(query)}'
-                  print(f'البحث عن: {query}')
+                  print(f'البحث عن الرابط: {url}')
                   try:
                       page.goto(url, timeout=60000)
-                      page.wait_for_timeout(4000)
+                      page.wait_for_timeout(6000) # انتظار تحميل محتوى JavaScript
+                      
+                      print(f'عنوان الصفحة: {page.title()}')
                       
                       links = []
+                      # البحث عن جميع الروابط التي تحتوي على كلمة /anime/
                       for el in page.query_selector_all('a'):
                           href = el.get_attribute('href')
                           text = el.inner_text().strip()
-                          if href and '/anime/' in href and text:
+                          if href and '/anime/' in href:
                               slug = href.split('/anime/')[-1].strip('/')
-                              links.append(f'{slug} | {text}')
+                              if slug and text and len(text) > 1:
+                                  links.append(f'{slug} | {text}')
                       
-                      result = '\n'.join(list(set(links)))
+                      unique_links = list(dict.fromkeys(links))
+                      print(f'تم العثور على {len(unique_links)} نتيجة.')
+                      result = '\n'.join(unique_links)
                   except Exception as e:
                       result = f'Error: {str(e)}'
+                      print(result)
 
               elif action == 'watch':
                   slug = os.getenv('SLUG', '')
@@ -84,7 +94,7 @@ jobs:
                   print(f'جلب رابط الحلقة: {url}')
                   try:
                       page.goto(url, timeout=60000)
-                      page.wait_for_timeout(4000)
+                      page.wait_for_timeout(6000)
                       content = page.content()
                       
                       bk_links = re.findall(r'https://bkvideo\.online/v[^\s\"<>]+', content)
