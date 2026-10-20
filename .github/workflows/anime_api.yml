@@ -34,7 +34,7 @@ jobs:
         run: |
           pip install curl_cffi beautifulsoup4
 
-      - name: Run DDG Smart Parser
+      - name: Run Bing Search Engine
         env:
           ACTION_TYPE: ${{ github.event.inputs.action }}
           QUERY: ${{ github.event.inputs.query }}
@@ -53,35 +53,31 @@ jobs:
 
           if action == 'search':
               query = os.getenv('QUERY', '')
-              ddg_url = f'https://html.duckduckgo.com/html/?q={urllib.parse.quote(f\"site:animeblkom.net {query}\")}'
-              print(f'=== DDG Search: {ddg_url} ===')
+              # البحث عبر Bing لاستخراج نتائج موقع animeblkom.net مباشرة
+              bing_url = f'https://www.bing.com/search?q={urllib.parse.quote(f\"site:animeblkom.net {query}\")}'
+              print(f'=== Bing Search: {bing_url} ===')
               try:
-                  response = requests.get(ddg_url, impersonate='chrome120', timeout=30)
+                  response = requests.get(bing_url, impersonate='chrome120', timeout=30)
                   soup = BeautifulSoup(response.text, 'html.parser')
                   
                   links = []
                   for a in soup.find_all('a', href=True):
                       href = a['href']
-                      real_url = href
-                      
-                      # فك تشفير رابط إعادة توجيه DuckDuckGo (uddg)
-                      if 'uddg=' in href:
-                          try:
-                              parsed_q = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
-                              if 'uddg' in parsed_q:
-                                  real_url = parsed_q['uddg'][0]
-                          except:
-                              pass
-                      
-                      # التحقق مما إذا كان الرابط يخص موقع أنمي بالكوم
-                      if 'animeblkom.net' in real_url:
-                          match = re.search(r'animeblkom\.net/(?:anime|show)/([^/?#]+)', real_url)
+                      if 'animeblkom.net' in href:
+                          match = re.search(r'animeblkom\.net/(?:anime|show)/([^/?#]+)', href)
                           if match:
                               slug = match.group(1)
                               text = a.get_text(strip=True)
                               if slug and slug != 'anime':
                                   links.append(f'{slug} | {text or slug}')
                   
+                  # محاولة احتياطية ثانية في حال كانت الروابط بصيغة مختلفة قليلاً
+                  if not links:
+                      for a in soup.find_all('a', href=True):
+                          href = a['href']
+                          if 'animeblkom.net' in href and ('/anime/' in href or '/show/' in href):
+                              links.append(f'{href} | {a.get_text(strip=True)}')
+
                   unique_links = list(dict.fromkeys(links))
                   if unique_links:
                       result = '\n'.join(unique_links[:40])
@@ -119,5 +115,5 @@ jobs:
           git config --global user.name 'Anime Bot'
           git config --global user.email 'bot@github.com'
           git add api_result.txt
-          git commit -m "Update API result with DDG decoder" || exit 0
+          git commit -m "Update API result via Bing search" || exit 0
           git push
