@@ -34,7 +34,7 @@ jobs:
         run: |
           pip install curl_cffi beautifulsoup4
 
-      - name: Run Flexible Search Engine & Save Logs
+      - name: Run Engine with Session Handling
         env:
           ACTION_TYPE: ${{ github.event.inputs.action }}
           QUERY: ${{ github.event.inputs.query }}
@@ -46,6 +46,7 @@ jobs:
           import traceback
           import urllib.parse
           import re
+          import time
           from curl_cffi import requests
           from bs4 import BeautifulSoup
 
@@ -58,12 +59,14 @@ jobs:
           result = ''
 
           try:
+              # استخدام Session لحفظ الكوكيز وتجاوز Cloudflare Redirects
+              session = requests.Session()
+
               if action == 'search':
                   query = os.getenv('QUERY', '')
-                  log(f'=== Starting flexible search for query: {query} ===')
+                  log(f'=== Starting search for query: {query} ===')
                   links = []
                   
-                  # البحث بدون استخدام site: لضمان جلب نتائج حقيقية من محركات البحث
                   search_queries = [
                       f'animeblkom {query}',
                       f'انمي بالكوم {query}'
@@ -73,9 +76,7 @@ jobs:
                       ddg_url = f'https://html.duckduckgo.com/html/?q={urllib.parse.quote(sq)}'
                       log(f'Trying DDG: {ddg_url}')
                       try:
-                          resp = requests.get(ddg_url, impersonate='chrome120', timeout=30)
-                          log(f'DDG Status: {resp.status_code}')
-                          
+                          resp = session.get(ddg_url, impersonate='chrome120', timeout=30)
                           soup = BeautifulSoup(resp.text, 'html.parser')
                           for a in soup.find_all('a', href=True):
                               href = a['href']
@@ -88,7 +89,6 @@ jobs:
                                   except:
                                       pass
                               
-                              # التقاط أي رابط يخص animeblkom.net
                               if 'animeblkom.net' in real_url:
                                   parts = [p for p in real_url.split('/') if p]
                                   if len(parts) >= 2:
@@ -98,28 +98,6 @@ jobs:
                                           links.append(f'{slug} | {text or slug}')
                       except Exception as e:
                           log(f'DDG Error: {traceback.format_exc()}')
-
-                  # محاولة عبر Bing بنفس الطريقة المرنة إذا لم يتم العثور على روابط
-                  if not links:
-                      for sq in search_queries:
-                          bing_url = f'https://www.bing.com/search?q={urllib.parse.quote(sq)}'
-                          log(f'Trying Bing: {bing_url}')
-                          try:
-                              resp = requests.get(bing_url, impersonate='chrome120', timeout=30)
-                              log(f'Bing Status: {resp.status_code}')
-                              
-                              soup = BeautifulSoup(resp.text, 'html.parser')
-                              for a in soup.find_all('a', href=True):
-                                  href = a['href']
-                                  if 'animeblkom.net' in href:
-                                      parts = [p for p in href.split('/') if p]
-                                      if len(parts) >= 2:
-                                          slug = parts[-1]
-                                          text = a.get_text(strip=True)
-                                          if slug and slug != 'anime' and slug != 'show':
-                                              links.append(f'{slug} | {text or slug}')
-                          except Exception as e:
-                              log(f'Bing Error: {traceback.format_exc()}')
 
                   unique_links = list(dict.fromkeys(links))
                   log(f'Total unique links found: {len(unique_links)}')
@@ -133,8 +111,15 @@ jobs:
                   slug = os.getenv('SLUG', '')
                   episode = os.getenv('EPISODE', '1')
                   watch_url = f'https://animeblkom.net/watch/{slug}/{episode}'
-                  log(f'Fetching Watch URL: {watch_url}')
-                  resp = requests.get(watch_url, impersonate='chrome120', timeout=30)
+                  log(f'Fetching Watch URL with Session: {watch_url}')
+                  
+                  # زيارة الصفحة الرئيسية أولاً لجلب كوكيز Cloudflare الأساسية
+                  session.get('https://animeblkom.net/', impersonate='chrome120', timeout=30)
+                  time.sleep(2) # مهلة قصيرة لإنهاء التحقق
+                  
+                  resp = session.get(watch_url, impersonate='chrome120', timeout=30)
+                  log(f'Watch Status Code: {resp.status_code}')
+                  log(f'Response snippet: {resp.text[:300]}')
                   
                   bk_links = re.findall(r'https?://[^\s\"\'<>]+bkvideo[^\s\"\'<>]+', resp.text)
                   if not bk_links:
@@ -164,5 +149,5 @@ jobs:
           git config --global user.name 'Anime Bot'
           git config --global user.email 'bot@github.com'
           git add api_result.txt debug.txt
-          git commit -m "Update search with flexible query" || exit 0
+          git commit -m "Update watch engine with Session and cookies" || exit 0
           git push
