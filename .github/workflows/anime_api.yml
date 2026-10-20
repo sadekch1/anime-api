@@ -17,87 +17,13 @@ on:
         description: 'Episode number'
         required: false
 
+# أضف هذا الصلاحية هنا 👇 لكي يسمح له بالتعديل والرفع
+permissions:
+  contents: write
+
 jobs:
   run-engine:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install Playwright
-        run: |
-          pip install playwright
-          playwright install chromium
-          playwright install-deps chromium
-
-      - name: Run Scraper Engine
-        env:
-          ACTION_TYPE: ${{ github.event.inputs.action }}
-          QUERY: ${{ github.event.inputs.query }}
-          SLUG: ${{ github.event.inputs.slug }}
-          EPISODE: ${{ github.event.inputs.episode }}
-        run: |
-          python -c "
-          import os
-          import urllib.parse
-          import re
-          from playwright.sync_api import sync_playwright
-
-          action = os.getenv('ACTION_TYPE')
-          result = ''
-
-          with sync_playwright() as p:
-              browser = p.chromium.launch(headless=True)
-              page = browser.new_page()
-
-              if action == 'search':
-                  query = os.getenv('QUERY', '')
-                  url = f'https://animeblkom.net/search?query={urllib.parse.quote(query)}'
-                  print(f'البحث عن: {query}')
-                  try:
-                      page.goto(url, timeout=60000)
-                      page.wait_for_timeout(4000)
-                      
-                      links = []
-                      for el in page.query_selector_all('a'):
-                          href = el.get_attribute('href')
-                          text = el.inner_text().strip()
-                          if href and '/anime/' in href and text:
-                              slug = href.split('/anime/')[-1].strip('/')
-                              links.append(f'{slug} | {text}')
-                      
-                      result = '\n'.join(list(set(links)))
-                  except Exception as e:
-                      result = f'Error: {str(e)}'
-
-              elif action == 'watch':
-                  slug = os.getenv('SLUG', '')
-                  episode = os.getenv('EPISODE', '1')
-                  url = f'https://animeblkom.net/watch/{slug}/{episode}'
-                  print(f'جلب رابط الحلقة: {url}')
-                  try:
-                      page.goto(url, timeout=60000)
-                      page.wait_for_timeout(4000)
-                      content = page.content()
-                      
-                      bk_links = re.findall(r'https://bkvideo\.online/v[^\s\"<>]+', content)
-                      result = '\n'.join(list(set(bk_links)))
-                  except Exception as e:
-                      result = f'Error: {str(e)}'
-
-              browser.close()
-
-          with open('api_result.txt', 'w', encoding='utf-8') as f:
-              f.write(result)
-          "
-
-      - name: Commit and Push Result
-        run: |
-          git config --global user.name 'Anime Bot'
-          git config --global user.email 'bot@github.com'
-          git add api_result.txt
-          git commit -m "Update API result" || exit 0
-          git push
+      # ... باقي الكود كما هو بدون تغيير ...
