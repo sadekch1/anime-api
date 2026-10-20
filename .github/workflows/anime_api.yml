@@ -34,7 +34,7 @@ jobs:
         run: |
           pip install curl_cffi beautifulsoup4
 
-      - name: Run Search via DuckDuckGo Bypass
+      - name: Run DDG Smart Parser
         env:
           ACTION_TYPE: ${{ github.event.inputs.action }}
           QUERY: ${{ github.event.inputs.query }}
@@ -53,9 +53,8 @@ jobs:
 
           if action == 'search':
               query = os.getenv('QUERY', '')
-              # البحث عبر DuckDuckGo لتجاوز حظر Cloudflare على موقع animeblkom.net
               ddg_url = f'https://html.duckduckgo.com/html/?q={urllib.parse.quote(f\"site:animeblkom.net {query}\")}'
-              print(f'=== Searching via DuckDuckGo: {ddg_url} ===')
+              print(f'=== DDG Search: {ddg_url} ===')
               try:
                   response = requests.get(ddg_url, impersonate='chrome120', timeout=30)
                   soup = BeautifulSoup(response.text, 'html.parser')
@@ -63,9 +62,20 @@ jobs:
                   links = []
                   for a in soup.find_all('a', href=True):
                       href = a['href']
-                      # استخراج روابط الأنمي من النتائج المؤرشفة
-                      if 'animeblkom.net' in href and ('/anime/' in href or '/show/' in href):
-                          match = re.search(r'animeblkom\.net/(?:anime|show)/([^/?#]+)', href)
+                      real_url = href
+                      
+                      # فك تشفير رابط إعادة توجيه DuckDuckGo (uddg)
+                      if 'uddg=' in href:
+                          try:
+                              parsed_q = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
+                              if 'uddg' in parsed_q:
+                                  real_url = parsed_q['uddg'][0]
+                          except:
+                              pass
+                      
+                      # التحقق مما إذا كان الرابط يخص موقع أنمي بالكوم
+                      if 'animeblkom.net' in real_url:
+                          match = re.search(r'animeblkom\.net/(?:anime|show)/([^/?#]+)', real_url)
                           if match:
                               slug = match.group(1)
                               text = a.get_text(strip=True)
@@ -76,7 +86,7 @@ jobs:
                   if unique_links:
                       result = '\n'.join(unique_links[:40])
                   else:
-                      result = 'NO_RESULTS_found'
+                      result = 'NO_RESULTS_FOUND'
               except Exception as e:
                   result = f'ERROR: {str(e)}'
 
@@ -96,7 +106,7 @@ jobs:
                   if unique_streams:
                       result = '\n'.join(unique_streams)
                   else:
-                      result = f'NO_STREAMS_FOUND | Status: {response.status_code}'
+                      result = 'NO_STREAMS_FOUND'
               except Exception as e:
                   result = f'ERROR: {str(e)}'
 
@@ -109,5 +119,5 @@ jobs:
           git config --global user.name 'Anime Bot'
           git config --global user.email 'bot@github.com'
           git add api_result.txt
-          git commit -m "Update API result via DDG search" || exit 0
+          git commit -m "Update API result with DDG decoder" || exit 0
           git push
