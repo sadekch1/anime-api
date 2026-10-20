@@ -30,11 +30,13 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
+      - name: Install Playwright & Stealth
         run: |
-          pip install curl_cffi beautifulsoup4
+          pip install playwright playwright-stealth
+          playwright install chromium
+          playwright install-deps chromium
 
-      - name: Run Engine with Session Handling
+      - name: Run Playwright Stealth Engine
         env:
           ACTION_TYPE: ${{ github.event.inputs.action }}
           QUERY: ${{ github.event.inputs.query }}
@@ -46,108 +48,114 @@ jobs:
           import traceback
           import urllib.parse
           import re
-          import time
-          from curl_cffi import requests
-          from bs4 import BeautifulSoup
-
-          debug_logs = []
-          def log(msg):
-              print(msg)
-              debug_logs.append(str(msg))
+          from playwright.sync_api import sync_playwright
+          from playwright_stealth import stealth_sync
 
           action = os.getenv('ACTION_TYPE')
           result = ''
 
           try:
-              # استخدام Session لحفظ الكوكيز وتجاوز Cloudflare Redirects
-              session = requests.Session()
+              with sync_playwright() as p:
+                  browser = p.chromium.launch(
+                      headless=True,
+                      args=[
+                          '--no-sandbox',
+                          '--disable-setuid-sandbox',
+                          '--disable-blink-features=AutomationControlled'
+                      ]
+                  )
+                  context = browser.new_context(
+                      user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+                      viewport={'width': 1280, 'height': 800},
+                      locale='ar-SA'
+                  )
+                  page = context.new_page()
+                  stealth_sync(page)
 
-              if action == 'search':
-                  query = os.getenv('QUERY', '')
-                  log(f'=== Starting search for query: {query} ===')
-                  links = []
-                  
-                  search_queries = [
-                      f'animeblkom {query}',
-                      f'انمي بالكوم {query}'
-                  ]
-                  
-                  for sq in search_queries:
-                      ddg_url = f'https://html.duckduckgo.com/html/?q={urllib.parse.quote(sq)}'
-                      log(f'Trying DDG: {ddg_url}')
-                      try:
-                          resp = session.get(ddg_url, impersonate='chrome120', timeout=30)
-                          soup = BeautifulSoup(resp.text, 'html.parser')
-                          for a in soup.find_all('a', href=True):
-                              href = a['href']
-                              real_url = href
-                              if 'uddg=' in href:
-                                  try:
-                                      parsed_q = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
-                                      if 'uddg' in parsed_q:
-                                          real_url = parsed_q['uddg'][0]
-                                  except:
-                                      pass
-                              
-                              if 'animeblkom.net' in real_url:
-                                  parts = [p for p in real_url.split('/') if p]
-                                  if len(parts) >= 2:
-                                      slug = parts[-1]
-                                      text = a.get_text(strip=True)
-                                      if slug and slug != 'anime' and slug != 'show':
-                                          links.append(f'{slug} | {text or slug}')
-                      except Exception as e:
-                          log(f'DDG Error: {traceback.format_exc()}')
-
-                  unique_links = list(dict.fromkeys(links))
-                  log(f'Total unique links found: {len(unique_links)}')
-                  
-                  if unique_links:
-                      result = '\n'.join(unique_links[:40])
-                  else:
-                      result = 'NO_RESULTS_FOUND'
-
-              elif action == 'watch':
-                  slug = os.getenv('SLUG', '')
-                  episode = os.getenv('EPISODE', '1')
-                  watch_url = f'https://animeblkom.net/watch/{slug}/{episode}'
-                  log(f'Fetching Watch URL with Session: {watch_url}')
-                  
-                  # زيارة الصفحة الرئيسية أولاً لجلب كوكيز Cloudflare الأساسية
-                  session.get('https://animeblkom.net/', impersonate='chrome120', timeout=30)
-                  time.sleep(2) # مهلة قصيرة لإنهاء التحقق
-                  
-                  resp = session.get(watch_url, impersonate='chrome120', timeout=30)
-                  log(f'Watch Status Code: {resp.status_code}')
-                  log(f'Response snippet: {resp.text[:300]}')
-                  
-                  bk_links = re.findall(r'https?://[^\s\"\'<>]+bkvideo[^\s\"\'<>]+', resp.text)
-                  if not bk_links:
-                      bk_links = re.findall(r'https?://[^\s\"\'<>:]+\.mp4[^\s\"\'<>]*', resp.text)
+                  if action == 'search':
+                      query = os.getenv('QUERY', '')
+                      print(f'Searching for: {query}')
+                      links = []
                       
-                  unique_streams = list(set(bk_links))
-                  log(f'Found streams: {unique_streams}')
-                  if unique_streams:
-                      result = '\n'.join(unique_streams)
-                  else:
-                      result = 'NO_STREAMS_FOUND'
+                      search_queries = [
+                          f'https://html.duckduckgo.com/html/?q={urllib.parse.quote(f\"animeblkom {query}\")}',
+                          f'https://html.duckduckgo.com/html/?q={urllib.parse.quote(f\"انمي بالكوم {query}\")}'
+                      ]
+                      
+                      for sq in search_queries:
+                          try:
+                              page.goto(sq, timeout=30000)
+                              page.wait_for_timeout(3000)
+                              
+                              for a in page.query_selector_all('a'):
+                                  href = a.get_attribute('href') or ''
+                                  real_url = href
+                                  if 'uddg=' in href:
+                                      try:
+                                          parsed_q = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
+                                          if 'uddg' in parsed_q:
+                                              real_url = parsed_q['uddg'][0]
+                                      except:
+                                          pass
+                                  
+                                  if 'animeblkom.net' in real_url:
+                                      parts = [p for p in real_url.split('/') if p]
+                                      if len(parts) >= 2:
+                                          slug = parts[-1]
+                                          text = a.inner_text().strip()
+                                          if slug and slug != 'anime' and slug != 'show':
+                                              links.append(f'{slug} | {text or slug}')
+                          except Exception as e:
+                              print(f'Search error: {e}')
+
+                      unique_links = list(dict.fromkeys(links))
+                      if unique_links:
+                          result = '\n'.join(unique_links[:40])
+                      else:
+                          result = 'NO_RESULTS_FOUND'
+
+                  elif action == 'watch':
+                      slug = os.getenv('SLUG', '')
+                      episode = os.getenv('EPISODE', '1')
+                      watch_url = f'https://animeblkom.net/watch/{slug}/{episode}'
+                      print(f'Fetching Watch URL with Playwright: {watch_url}')
+                      
+                      # الانتقال للصفحة مع منح وقت كافٍ لتجاوز تحدي Cloudflare JS تلقائياً
+                      page.goto(watch_url, timeout=60000)
+                      
+                      # الانتظار الذكي حتى يتم حل التحدي وتحميل محتوى الصفحة الحقيقي
+                      for _ in range(10):
+                          content = page.content()
+                          if '__cf_chl_jschl_tk__' not in content and 'Checking your browser' not in content:
+                              break
+                          page.wait_for_timeout(2000)
+                      
+                      content = page.content()
+                      
+                      # استخراج روابط التشغيل المباشرة
+                      bk_links = re.findall(r'https?://[^\s\"\'<>]+bkvideo[^\s\"\'<>]+', content)
+                      if not bk_links:
+                          bk_links = re.findall(r'https?://[^\s\"\'<>:]+\.mp4[^\s\"\'<>]*', content)
+                          
+                      unique_streams = list(set(bk_links))
+                      if unique_streams:
+                          result = '\n'.join(unique_streams)
+                      else:
+                          result = 'NO_STREAMS_FOUND'
+
+                  browser.close()
 
           except Exception as e:
-              err_msg = traceback.format_exc()
-              log(f'CRITICAL ERROR: {err_msg}')
               result = f'ERROR: {str(e)}'
 
           with open('api_result.txt', 'w', encoding='utf-8') as f:
               f.write(result.strip())
-
-          with open('debug.txt', 'w', encoding='utf-8') as f:
-              f.write('\n'.join(debug_logs))
           "
 
-      - name: Commit and Push Result and Debug Logs
+      - name: Commit and Push Result
         run: |
           git config --global user.name 'Anime Bot'
           git config --global user.email 'bot@github.com'
-          git add api_result.txt debug.txt
-          git commit -m "Update watch engine with Session and cookies" || exit 0
+          git add api_result.txt
+          git commit -m "Update watch engine with Playwright Stealth" || exit 0
           git push
