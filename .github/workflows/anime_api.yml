@@ -36,7 +36,7 @@ jobs:
           playwright install chromium
           playwright install-deps chromium
 
-      - name: Run Scraper Engine
+      - name: Run Scraper Engine with Debug
         env:
           ACTION_TYPE: ${{ github.event.inputs.action }}
           QUERY: ${{ github.event.inputs.query }}
@@ -53,7 +53,6 @@ jobs:
           result = ''
 
           with sync_playwright() as p:
-              # تشغيل المتصفح بإعدادات تتجاوز كشف أتمتة المتصفح
               browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
               context = browser.new_context(
                   user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
@@ -64,30 +63,37 @@ jobs:
               if action == 'search':
                   query = os.getenv('QUERY', '')
                   search_url = f'https://animeblkom.net/search?query={urllib.parse.quote(query)}'
-                  print(f'البحث عن: {search_url}')
+                  print(f'=== DEBUG: Searching URL: {search_url} ===')
                   try:
-                      page.goto(search_url, wait_until='domcontentloaded', timeout=60000)
-                      page.wait_for_timeout(5000)
+                      response = page.goto(search_url, wait_until='domcontentloaded', timeout=60000)
+                      print(f'=== DEBUG: HTTP Status: {response.status if response else \"None\"} ===')
+                      print(f'=== DEBUG: Page Title: {page.title()} ===')
                       
-                      links = []
-                      # استخراج كافة الروابط التي تتضمن كلمة /anime/
-                      elements = page.query_selector_all('a[href*=\"/anime/\"]')
-                      for el in elements:
-                          href = el.get_attribute('href') or ''
-                          text = el.inner_text().strip()
-                          if '/anime/' in href:
-                              parts = [p for p in href.split('/') if p]
-                              if len(parts) >= 2:
-                                  slug = parts[-1]
-                                  # تجنب التكرار والعناوين الفارغة
-                                  if slug and text and len(text) > 1 and slug != 'anime':
-                                      links.append(f'{slug} | {text}')
+                      page.wait_for_timeout(6000)
                       
-                      unique_links = list(dict.fromkeys(links))
-                      if unique_links:
-                          result = '\n'.join(unique_links)
+                      # فحص ما إذا كانت الصفحة تحتوي على حماية Cloudflare أو تحدي
+                      page_text = page.inner_text('body')
+                      if 'cloudflare' in page_text.lower() or 'ddos-guard' in page_text.lower():
+                          result = 'CF_BLOCKED | موقع AnimeBlkom يمنع السيرفر (Cloudflare Block)'
                       else:
-                          result = 'NO_RESULTS'
+                          links = []
+                          # البحث عن أي عناصر تحتوي على روابط أنمي أو حلقات
+                          elements = page.query_selector_all('a')
+                          print(f'=== DEBUG: Total <a> tags found: {len(elements)} ===')
+                          
+                          for el in elements:
+                              href = el.get_attribute('href') or ''
+                              text = el.inner_text().strip()
+                              if href and len(text) > 1:
+                                  # حفظ أي رابط مفيد مع عنوانه لنتمكن من رؤيته
+                                  links.append(f'{href} | {text}')
+                          
+                          unique_links = list(dict.fromkeys(links))
+                          if unique_links:
+                              # نعرض أول 40 نتيجة مباشرة في ملف التشخيص
+                              result = '\n'.join(unique_links[:40])
+                          else:
+                              result = f'NO_LINKS_FOUND | Page Title: {page.title()} | Content preview: {page_text[:100]}'
                   except Exception as e:
                       result = f'ERROR: {str(e)}'
 
@@ -95,13 +101,12 @@ jobs:
                   slug = os.getenv('SLUG', '')
                   episode = os.getenv('EPISODE', '1')
                   watch_url = f'https://animeblkom.net/watch/{slug}/{episode}'
-                  print(f'جلب الحلقة من: {watch_url}')
+                  print(f'=== DEBUG Watch URL: {watch_url} ===')
                   try:
                       page.goto(watch_url, wait_until='domcontentloaded', timeout=60000)
                       page.wait_for_timeout(5000)
                       content = page.content()
                       
-                      # استخراج روابط التشغيل المباشرة
                       bk_links = re.findall(r'https?://[^\s\"\'<>]+bkvideo[^\s\"\'<>]+', content)
                       if not bk_links:
                           bk_links = re.findall(r'https?://[^\s\"\'<>:]+\.mp4[^\s\"\'<>]*', content)
@@ -110,13 +115,12 @@ jobs:
                       if unique_streams:
                           result = '\n'.join(unique_streams)
                       else:
-                          result = 'NO_STREAMS_FOUND'
+                          result = f'NO_STREAMS | HTML snippet: {content[:200]}'
                   except Exception as e:
                       result = f'ERROR: {str(e)}'
 
               browser.close()
 
-          # حفظ النتيجة في الملف
           with open('api_result.txt', 'w', encoding='utf-8') as f:
               f.write(result.strip())
           "
@@ -126,5 +130,5 @@ jobs:
           git config --global user.name 'Anime Bot'
           git config --global user.email 'bot@github.com'
           git add api_result.txt
-          git commit -m "Update API result" || exit 0
+          git commit -m "Update Debug API result" || exit 0
           git push
