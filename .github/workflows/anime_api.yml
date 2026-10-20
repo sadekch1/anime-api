@@ -32,9 +32,9 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install duckduckgo_search curl_cffi beautifulsoup4
+          pip install curl_cffi beautifulsoup4
 
-      - name: Run Official DDGS Search
+      - name: Run Debug Engine & Save Logs
         env:
           ACTION_TYPE: ${{ github.event.inputs.action }}
           QUERY: ${{ github.event.inputs.query }}
@@ -43,67 +43,123 @@ jobs:
         run: |
           python -c "
           import os
+          import traceback
+          import urllib.parse
           import re
-          from duckduckgo_search import DDGS
           from curl_cffi import requests
           from bs4 import BeautifulSoup
+
+          debug_logs = []
+          def log(msg):
+              print(msg)
+              debug_logs.append(str(msg))
 
           action = os.getenv('ACTION_TYPE')
           result = ''
 
-          if action == 'search':
-              query = os.getenv('QUERY', '')
-              print(f'=== Searching via DDGS for: {query} ===')
-              links = []
-              try:
-                  with DDGS() as ddgs:
-                      # البحث المباشر عبر مكتبة DDGS المخصصة
-                      for r in ddgs.text(f'site:animeblkom.net {query}', max_results=15):
-                          href = r.get('href', '')
-                          title = r.get('title', '')
-                          
-                          match = re.search(r'animeblkom\.net/(?:anime|show)/([^/?#]+)', href)
-                          if match:
-                              slug = match.group(1)
-                              if slug and slug != 'anime':
-                                  links.append(f'{slug} | {title or slug}')
+          try:
+              if action == 'search':
+                  query = os.getenv('QUERY', '')
+                  log(f'=== Starting search for query: {query} ===')
+                  links = []
                   
+                  # المحاولة الأولى: استخدام محرك DuckDuckGo النسخة البسيطة HTML
+                  ddg_url = f'https://html.duckduckgo.com/html/?q={urllib.parse.quote(f\"site:animeblkom.net {query}\")}'
+                  log(f'Trying DDG HTML: {ddg_url}')
+                  try:
+                      resp = requests.get(ddg_url, impersonate='chrome120', timeout=30)
+                      log(f'DDG Status Code: {resp.status_code}')
+                      log(f'DDG Response snippet: {resp.text[:350]}')
+                      
+                      soup = BeautifulSoup(resp.text, 'html.parser')
+                      for a in soup.find_all('a', href=True):
+                          href = a['href']
+                          real_url = href
+                          if 'uddg=' in href:
+                              try:
+                                  parsed_q = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
+                                  if 'uddg' in parsed_q:
+                                      real_url = parsed_q['uddg'][0]
+                              except:
+                                  pass
+                          
+                          if 'animeblkom.net' in real_url:
+                              match = re.search(r'animeblkom\.net/(?:anime|show)/([^/?#]+)', real_url)
+                              if match:
+                                  slug = match.group(1)
+                                  text = a.get_text(strip=True)
+                                  if slug and slug != 'anime':
+                                      links.append(f'{slug} | {text or slug}')
+                  except Exception as e:
+                      log(f'DDG Error: {traceback.format_exc()}')
+
+              # المحاولة الثانية: استخدام Bing Search إذا لم يجد نتائج
+                  if not links:
+                      bing_url = f'https://www.bing.com/search?q={urllib.parse.quote(f\"site:animeblkom.net {query}\")}'
+                      log(f'Trying Bing: {bing_url}')
+                      try:
+                          resp = requests.get(bing_url, impersonate='chrome120', timeout=30)
+                          log(f'Bing Status Code: {resp.status_code}')
+                          log(f'Bing Response snippet: {resp.text[:350]}')
+                          
+                          soup = BeautifulSoup(resp.text, 'html.parser')
+                          for a in soup.find_all('a', href=True):
+                              href = a['href']
+                              if 'animeblkom.net' in href:
+                                  match = re.search(r'animeblkom\.net/(?:anime|show)/([^/?#]+)', href)
+                                  if match:
+                                      slug = match.group(1)
+                                      text = a.get_text(strip=True)
+                                      if slug and slug != 'anime':
+                                          links.append(f'{slug} | {text or slug}')
+                      except Exception as e:
+                          log(f'Bing Error: {traceback.format_exc()}')
+
                   unique_links = list(dict.fromkeys(links))
+                  log(f'Total unique links found: {len(unique_links)}')
+                  
                   if unique_links:
-                      result = '\n'.join(unique_links[:30])
+                      result = '\n'.join(unique_links[:40])
                   else:
                       result = 'NO_RESULTS_FOUND'
-              except Exception as e:
-                  result = f'ERROR: {str(e)}'
 
-          elif action == 'watch':
-              slug = os.getenv('SLUG', '')
-              episode = os.getenv('EPISODE', '1')
-              watch_url = f'https://animeblkom.net/watch/{slug}/{episode}'
-              print(f'=== Fetching Watch: {watch_url} ===')
-              try:
-                  response = requests.get(watch_url, impersonate='chrome120', timeout=30)
+              elif action == 'watch':
+                  slug = os.getenv('SLUG', '')
+                  episode = os.getenv('EPISODE', '1')
+                  watch_url = f'https://animeblkom.net/watch/{slug}/{episode}'
+                  log(f'Fetching Watch URL: {watch_url}')
+                  resp = requests.get(watch_url, impersonate='chrome120', timeout=30)
+                  log(f'Watch Status Code: {resp.status_code}')
                   
-                  bk_links = re.findall(r'https?://[^\s\"\'<>]+bkvideo[^\s\"\'<>]+', response.text)
+                  bk_links = re.findall(r'https?://[^\s\"\'<>]+bkvideo[^\s\"\'<>]+', resp.text)
                   if not bk_links:
-                      bk_links = re.findall(r'https?://[^\s\"\'<>:]+\.mp4[^\s\"\'<>]*', response.text)
+                      bk_links = re.findall(r'https?://[^\s\"\'<>:]+\.mp4[^\s\"\'<>]*', resp.text)
                       
                   unique_streams = list(set(bk_links))
+                  log(f'Found streams: {unique_streams}')
                   if unique_streams:
                       result = '\n'.join(unique_streams)
                   else:
                       result = 'NO_STREAMS_FOUND'
-              except Exception as e:
-                  result = f'ERROR: {str(e)}'
 
+          except Exception as e:
+              err_msg = traceback.format_exc()
+              log(f'CRITICAL ERROR: {err_msg}')
+              result = f'ERROR: {str(e)}'
+
+          # كتابة النتائج
           with open('api_result.txt', 'w', encoding='utf-8') as f:
               f.write(result.strip())
+
+          # كتابة السجلات المفصلة في debug.txt
+          with open('debug.txt', 'w', encoding='utf-8') as f:
+              f.write('\n'.join(debug_logs))
           "
 
-      - name: Commit and Push Result
+      - name: Commit and Push Result and Debug Logs
         run: |
           git config --global user.name 'Anime Bot'
           git config --global user.email 'bot@github.com'
-          git add api_result.txt
-          git commit -m "Update API result via DDGS" || exit 0
+          git add api_result.txt debug.txt
+          git commit -m "Update API results and debug logs" || exit 0
           git push
