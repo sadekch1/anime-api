@@ -30,17 +30,22 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Clone ani-cli-arabic Project & Setup
+      - name: Clone ani-cli-arabic & Install Dependencies
         run: |
-          # استنساخ المشروع الرسمي بالكامل
-          git clone https://github.com/np4abdou1/ani-cli-arabic.git ani_cli_project
-          cd ani_cli_project
-          # تثبيت المتطلبات الخاصة بالمشروع إن وجدت
-          if [ -f "requirements.txt" ]; then pip install -r requirements.txt; fi
-          pip install curl_cffi beautifulsoup4 playwright playwright-stealth
-          playwright install chromium
+          # استنساخ المستودع الجاهز بالكامل
+          git clone https://github.com/np4abdou1/ani-cli-arabic.git ani_engine
+          cd ani_engine
+          
+          # تثبيت متطلبات المشروع إن وجدت
+          if [ -f "requirements.txt" ]; then
+              pip install -r requirements.txt
+          else
+              pip install curl_cffi beautifulsoup4 playwright
+          fi
+          
+          playwright install chromium || true
 
-      - name: Run Engine using ani-cli-arabic Logic
+      - name: Execute ani-cli-arabic Script Directly
         env:
           ACTION_TYPE: ${{ github.event.inputs.action }}
           QUERY: ${{ github.event.inputs.query }}
@@ -53,88 +58,55 @@ jobs:
           import subprocess
           import glob
 
-          # الانتقال لمسار المشروع المستنسخ
-          os.chdir('ani_cli_project')
-          sys.path.append(os.getcwd())
+          # الانتقال لمجلد المشروع المستنسخ
+          os.chdir('ani_engine')
+          sys.path.insert(0, os.getcwd())
 
           action = os.getenv('ACTION_TYPE')
           query = os.getenv('QUERY', '')
           slug = os.getenv('SLUG', '')
           episode = os.getenv('EPISODE', '1')
 
-          result = ''
+          output = ''
 
           try:
-              if action == 'search':
-                  print(f'=== Running search via ani-cli-arabic for: {query} ===')
-                  
-                  # فحص ملفات المشروع لتنفيذ سكربت البحث الموجود بداخله
-                  py_files = glob.glob('*.py')
-                  search_executed = False
-                  
-                  for py in py_files:
-                      if 'search' in py.lower() or 'main' in py.lower() or 'cli' in py.lower():
-                          try:
-                              # محاولة تشغيل السكربت عبر الأمر أو استيراده
-                              res = subprocess.run(
-                                  [sys.executable, py, '--search', query],
-                                  capture_output=True, text=True, timeout=25
-                              )
-                              if res.stdout.strip():
-                                  result = res.stdout.strip()
-                                  search_executed = True
-                                  break
-                          except Exception as sub_ex:
-                              print(f'Subprocess error on {py}: {sub_ex}')
+              # البحث عن السكربت الرئيسي داخل المستودع الجاهز
+              py_files = [f for f in glob.glob('*.py') if f not in ['__init__.py']]
+              print(f'Discovered Python scripts: {py_files}')
 
-                  # إذا لم يتم العثور على خيار مباشر، نقوم بتنفيذ محرك البحث المدمج للمشروع
-                  if not search_executed:
-                      from curl_cffi import requests
-                      from bs4 import BeautifulSoup
-                      import urllib.parse
-                      
-                      ddg_url = f'https://html.duckduckgo.com/html/?q={urllib.parse.quote(f\"site:animeblkom.net {query}\")}'
-                      resp = requests.get(ddg_url, impersonate='chrome120', timeout=30)
-                      soup = BeautifulSoup(resp.text, 'html.parser')
-                      
-                      links = []
-                      for a in soup.find_all('a', href=True):
-                          href = a['href']
-                          if 'animeblkom.net' in href:
-                              parts = [p for p in href.split('/') if p]
-                              if len(parts) >= 2:
-                                  s = parts[-1]
-                                  if s and s not in ['anime', 'show', 'cdn-cgi']:
-                                      links.append(f'{s} | {s}')
-                      
-                      unique = list(dict.fromkeys(links))
-                      result = '\n'.join(unique[:40]) if unique else 'NO_RESULTS_FOUND'
+              target_script = None
+              for f in py_files:
+                  if 'main' in f.lower() or 'cli' in f.lower() or 'run' in f.lower() or len(py_files) == 1:
+                      target_script = f
+                      break
+              if not target_script and py_files:
+                  target_script = py_files[0]
 
-              elif action == 'watch':
-                  print(f'=== Fetching watch via ani-cli-arabic for slug: {slug}, ep: {episode} ===')
-                  watch_url = f'https://animeblkom.net/watch/{slug}/{episode}'
-                  
-                  from curl_cffi import requests
-                  import re
-                  
-                  session = requests.Session()
-                  session.get('https://animeblkom.net/', impersonate='chrome120', timeout=30)
-                  resp = session.get(watch_url, impersonate='chrome120', timeout=30)
-                  
-                  bk_links = re.findall(r'https?://[^\s\"\'<>]+bkvideo[^\s\"\'<>]+', resp.text)
-                  if not bk_links:
-                      bk_links = re.findall(r'https?://[^\s\"\'<>:]+\.mp4[^\s\"\'<>]*', resp.text)
-                      
-                  unique_streams = list(set(bk_links))
-                  result = '\n'.join(unique_streams) if unique_streams else 'NO_STREAMS_FOUND'
+              if target_script:
+                  if action == 'search':
+                      print(f'Running search via {target_script} for: {query}')
+                      res = subprocess.run(
+                          [sys.executable, target_script, '--search', query],
+                          capture_output=True, text=True, timeout=40
+                      )
+                      output = res.stdout if res.stdout.strip() else res.stderr
+                  elif action == 'watch':
+                      print(f'Running watch via {target_script} for slug: {slug}, ep: {episode}')
+                      res = subprocess.run(
+                          [sys.executable, target_script, '--slug', slug, '--episode', str(episode)],
+                          capture_output=True, text=True, timeout=40
+                      )
+                      output = res.stdout if res.stdout.strip() else res.stderr
+              else:
+                  output = 'ERROR: No executable python script found in ani-cli-arabic'
 
           except Exception as e:
-              result = f'ERROR: {str(e)}'
+              output = f'ERROR: {str(e)}'
 
           # العودة للمجلد الرئيسي وحفظ النتيجة
           os.chdir('..')
           with open('api_result.txt', 'w', encoding='utf-8') as f:
-              f.write(result.strip())
+              f.write(output.strip())
           "
 
       - name: Commit and Push Result
@@ -142,5 +114,5 @@ jobs:
           git config --global user.name 'Anime Bot'
           git config --global user.email 'bot@github.com'
           git add api_result.txt
-          git commit -m "Update result using cloned ani-cli-arabic project" || exit 0
+          git commit -m "Execute official ani-cli-arabic ready script" || exit 0
           git push
