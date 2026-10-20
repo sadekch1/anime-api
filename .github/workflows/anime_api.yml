@@ -30,13 +30,11 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Playwright & Stealth
+      - name: Install Dependencies
         run: |
-          pip install playwright playwright-stealth
-          playwright install chromium
-          playwright install-deps chromium
+          pip install curl_cffi beautifulsoup4
 
-      - name: Run Scraper Engine with Stealth
+      - name: Run Fast Scraper with TLS Impersonation
         env:
           ACTION_TYPE: ${{ github.event.inputs.action }}
           QUERY: ${{ github.event.inputs.query }}
@@ -47,89 +45,68 @@ jobs:
           import os
           import urllib.parse
           import re
-          from playwright.sync_api import sync_playwright
-          from playwright_stealth import stealth_sync
+          from curl_cffi import requests
+          from bs4 import BeautifulSoup
 
           action = os.getenv('ACTION_TYPE')
           result = ''
 
-          with sync_playwright() as p:
-              # تشغيل المتصفح مع إزالة علامات الأتمتة
-              browser = p.chromium.launch(
-                  headless=True, 
-                  args=[
-                      '--no-sandbox', 
-                      '--disable-setuid-sandbox',
-                      '--disable-blink-features=AutomationControlled'
-                  ]
-              )
-              context = browser.new_context(
-                  user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-                  viewport={'width': 1280, 'height': 800},
-                  locale='ar-SA',
-                  timezone_id='Asia/Riyadh'
-              )
-              page = context.new_page()
-              
-              # تفعيل وضع التخفي لتجاوز Cloudflare
-              stealth_sync(page)
-
-              if action == 'search':
-                  query = os.getenv('QUERY', '')
-                  search_url = f'https://animeblkom.net/search?query={urllib.parse.quote(query)}'
-                  print(f'=== Stealth Search: {search_url} ===')
-                  try:
-                      page.goto(search_url, wait_until='networkidle', timeout=60000)
-                      page.wait_for_timeout(4000)
+          if action == 'search':
+              query = os.getenv('QUERY', '')
+              search_url = f'https://animeblkom.net/search?query={urllib.parse.quote(query)}'
+              print(f'=== Requesting: {search_url} ===')
+              try:
+                  # محاكاة بصمة متصفح كروم الحقيقي لتجاوز Cloudflare فوراً
+                  response = requests.get(search_url, impersonate='chrome120', timeout=30)
+                  print(f'Status Code: {response.status_code}')
+                  
+                  if 'cloudflare' in response.text.lower() and 'verify' in response.text.lower():
+                      result = 'CF_BLOCKED | موقع AnimeBlkom يحتاج تحقق بشري'
+                  else:
+                      soup = BeautifulSoup(response.text, 'html.parser')
+                      links = []
                       
-                      page_text = page.inner_text('body')
-                      if 'cloudflare' in page_text.lower() and 'verify' in page_text.lower():
-                          result = 'CF_BLOCKED | ما زالت الحماية تطالب بالتحقق البشري'
-                      else:
-                          links = []
-                          elements = page.query_selector_all('a')
-                          for el in elements:
-                              href = el.get_attribute('href') or ''
-                              text = el.inner_text().strip()
-                              # البحث عن الروابط التي تخص تفاصيل الأنمي
-                              if href and ('/anime/' in href or '/show/' in href) and len(text) > 1:
-                                  parts = [p for p in href.split('/') if p]
-                                  if len(parts) >= 2:
-                                      slug = parts[-1]
-                                      if slug and slug != 'anime':
-                                          links.append(f'{slug} | {text}')
-                          
-                          unique_links = list(dict.fromkeys(links))
-                          if unique_links:
-                              result = '\n'.join(unique_links[:40])
-                          else:
-                              result = f'NO_LINKS | Title: {page.title()}'
-                  except Exception as e:
-                      result = f'ERROR: {str(e)}'
-
-              elif action == 'watch':
-                  slug = os.getenv('SLUG', '')
-                  episode = os.getenv('EPISODE', '1')
-                  watch_url = f'https://animeblkom.net/watch/{slug}/{episode}'
-                  print(f'=== Stealth Watch: {watch_url} ===')
-                  try:
-                      page.goto(watch_url, wait_until='networkidle', timeout=60000)
-                      page.wait_for_timeout(4000)
-                      content = page.content()
+                      # استخراج الروابط الخاصة بالأنمي
+                      for a in soup.find_all('a', href=True):
+                          href = a['href']
+                          text = a.get_text(strip=True)
+                          if ('/anime/' in href or '/show/' in href) and len(text) > 1:
+                              parts = [p for p in href.split('/') if p]
+                              if len(parts) >= 2 and parts[-1] != 'anime':
+                                  slug = parts[-1]
+                                  links.append(f'{slug} | {text}')
                       
-                      bk_links = re.findall(r'https?://[^\s\"\'<>]+bkvideo[^\s\"\'<>]+', content)
-                      if not bk_links:
-                          bk_links = re.findall(r'https?://[^\s\"\'<>:]+\.mp4[^\s\"\'<>]*', content)
-                          
-                      unique_streams = list(set(bk_links))
-                      if unique_streams:
-                          result = '\n'.join(unique_streams)
+                      unique_links = list(dict.fromkeys(links))
+                      if unique_links:
+                          result = '\n'.join(unique_links[:40])
                       else:
-                          result = 'NO_STREAMS_FOUND'
-                  except Exception as e:
-                      result = f'ERROR: {str(e)}'
+                          # احتياطي: جلب العناوين في الصفحة إن لم يجد روابط مباشرة
+                          titles = [t.get_text(strip=True) for t in soup.find_all(['h2', 'h3', 'a']) if len(t.get_text(strip=True)) > 2]
+                          result = '\n'.join([f'item | {t}' for t in list(set(titles))[:30]])
+                          if not result:
+                              result = 'NO_RESULTS_FOUND'
+              except Exception as e:
+                  result = f'ERROR: {str(e)}'
 
-              browser.close()
+          elif action == 'watch':
+              slug = os.getenv('SLUG', '')
+              episode = os.getenv('EPISODE', '1')
+              watch_url = f'https://animeblkom.net/watch/{slug}/{episode}'
+              print(f'=== Fetching Watch: {watch_url} ===')
+              try:
+                  response = requests.get(watch_url, impersonate='chrome120', timeout=30)
+                  
+                  bk_links = re.findall(r'https?://[^\s\"\'<>]+bkvideo[^\s\"\'<>]+', response.text)
+                  if not bk_links:
+                      bk_links = re.findall(r'https?://[^\s\"\'<>:]+\.mp4[^\s\"\'<>]*', response.text)
+                      
+                  unique_streams = list(set(bk_links))
+                  if unique_streams:
+                      result = '\n'.join(unique_streams)
+                  else:
+                      result = 'NO_STREAMS_FOUND'
+              except Exception as e:
+                  result = f'ERROR: {str(e)}'
 
           with open('api_result.txt', 'w', encoding='utf-8') as f:
               f.write(result.strip())
@@ -140,5 +117,5 @@ jobs:
           git config --global user.name 'Anime Bot'
           git config --global user.email 'bot@github.com'
           git add api_result.txt
-          git commit -m "Update Stealth API result" || exit 0
+          git commit -m "Update API result with curl_cffi" || exit 0
           git push
