@@ -36,7 +36,7 @@ jobs:
           playwright install chromium
           playwright install-deps chromium
 
-      - name: Run Clean Filtered Search Engine
+      - name: Run Safe Filtered Search Engine
         env:
           ACTION_TYPE: ${{ github.event.inputs.action }}
           QUERY: ${{ github.event.inputs.query }}
@@ -46,6 +46,7 @@ jobs:
           python -c "
           import os
           import urllib.parse
+          from urllib.parse import urlparse
           import re
           from playwright.sync_api import sync_playwright
           from playwright_stealth import stealth_sync
@@ -86,7 +87,6 @@ jobs:
                               page.goto(sq, timeout=30000)
                               page.wait_for_timeout(3000)
                               
-                              # التأكد أن الصفحة ليست صفحة حماية أو تحدي
                               page_content = page.content()
                               if 'Checking your browser' in page_content or 'cf_chl' in page_content:
                                   continue
@@ -96,19 +96,22 @@ jobs:
                                   real_url = href
                                   if 'uddg=' in href:
                                       try:
-                                          parsed_q = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
+                                          parsed_q = parse_qs(urlparse(href).query)
                                           if 'uddg' in parsed_q:
                                               real_url = parsed_q['uddg'][0]
                                       except:
                                           pass
                                   
                                   if 'animeblkom.net' in real_url:
-                                      parts = [p for p in real_url.split('/') if p]
+                                      # استخراج المسار فقط بدون أي استعلامات أو رموز حماية (?foo=bar)
+                                      parsed_url = urlparse(real_url)
+                                      clean_path = parsed_url.path
+                                      
+                                      parts = [p for p in clean_path.split('/') if p]
                                       if len(parts) >= 2:
                                           slug = parts[-1]
                                           text = a.inner_text().strip()
                                           
-                                          # قائمة الكلمات المحظورة التي يجب تجاهلها تماماً
                                           blacklist = [
                                               'cdn-cgi', 'chk_jschl', 'search', 'watch', 
                                               'anime', 'show', 'login', 'register', 'tag'
@@ -117,9 +120,10 @@ jobs:
                                           is_clean = (
                                               slug 
                                               and slug not in blacklist 
-                                              and not slug.startswith('?') 
-                                              and not slug.startswith('__') 
-                                              and re.match(r'^[a-zA-Z0-9\-_]{3,40}$', slug)
+                                              and not 'cf_' in slug
+                                              and not 'tk=' in slug
+                                              and not '?' in slug
+                                              and re.match(r'^[a-zA-Z0-9\-_]{3,50}$', slug)
                                           )
                                           
                                           if is_clean:
@@ -173,5 +177,5 @@ jobs:
           git config --global user.name 'Anime Bot'
           git config --global user.email 'bot@github.com'
           git add api_result.txt
-          git commit -m "Update search with advanced blacklist filtering" || exit 0
+          git commit -m "Update search with urlparse path cleaning" || exit 0
           git push
