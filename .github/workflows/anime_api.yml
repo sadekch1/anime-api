@@ -30,13 +30,13 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Playwright
+      - name: Install Playwright & Stealth
         run: |
-          pip install playwright
+          pip install playwright playwright-stealth
           playwright install chromium
           playwright install-deps chromium
 
-      - name: Run Scraper Engine with Debug
+      - name: Run Scraper Engine with Stealth
         env:
           ACTION_TYPE: ${{ github.event.inputs.action }}
           QUERY: ${{ github.event.inputs.query }}
@@ -48,52 +48,62 @@ jobs:
           import urllib.parse
           import re
           from playwright.sync_api import sync_playwright
+          from playwright_stealth import stealth_sync
 
           action = os.getenv('ACTION_TYPE')
           result = ''
 
           with sync_playwright() as p:
-              browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
+              # تشغيل المتصفح مع إزالة علامات الأتمتة
+              browser = p.chromium.launch(
+                  headless=True, 
+                  args=[
+                      '--no-sandbox', 
+                      '--disable-setuid-sandbox',
+                      '--disable-blink-features=AutomationControlled'
+                  ]
+              )
               context = browser.new_context(
                   user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-                  viewport={'width': 1280, 'height': 720}
+                  viewport={'width': 1280, 'height': 800},
+                  locale='ar-SA',
+                  timezone_id='Asia/Riyadh'
               )
               page = context.new_page()
+              
+              # تفعيل وضع التخفي لتجاوز Cloudflare
+              stealth_sync(page)
 
               if action == 'search':
                   query = os.getenv('QUERY', '')
                   search_url = f'https://animeblkom.net/search?query={urllib.parse.quote(query)}'
-                  print(f'=== DEBUG: Searching URL: {search_url} ===')
+                  print(f'=== Stealth Search: {search_url} ===')
                   try:
-                      response = page.goto(search_url, wait_until='domcontentloaded', timeout=60000)
-                      print(f'=== DEBUG: HTTP Status: {response.status if response else \"None\"} ===')
-                      print(f'=== DEBUG: Page Title: {page.title()} ===')
+                      page.goto(search_url, wait_until='networkidle', timeout=60000)
+                      page.wait_for_timeout(4000)
                       
-                      page.wait_for_timeout(6000)
-                      
-                      # فحص ما إذا كانت الصفحة تحتوي على حماية Cloudflare أو تحدي
                       page_text = page.inner_text('body')
-                      if 'cloudflare' in page_text.lower() or 'ddos-guard' in page_text.lower():
-                          result = 'CF_BLOCKED | موقع AnimeBlkom يمنع السيرفر (Cloudflare Block)'
+                      if 'cloudflare' in page_text.lower() and 'verify' in page_text.lower():
+                          result = 'CF_BLOCKED | ما زالت الحماية تطالب بالتحقق البشري'
                       else:
                           links = []
-                          # البحث عن أي عناصر تحتوي على روابط أنمي أو حلقات
                           elements = page.query_selector_all('a')
-                          print(f'=== DEBUG: Total <a> tags found: {len(elements)} ===')
-                          
                           for el in elements:
                               href = el.get_attribute('href') or ''
                               text = el.inner_text().strip()
-                              if href and len(text) > 1:
-                                  # حفظ أي رابط مفيد مع عنوانه لنتمكن من رؤيته
-                                  links.append(f'{href} | {text}')
+                              # البحث عن الروابط التي تخص تفاصيل الأنمي
+                              if href and ('/anime/' in href or '/show/' in href) and len(text) > 1:
+                                  parts = [p for p in href.split('/') if p]
+                                  if len(parts) >= 2:
+                                      slug = parts[-1]
+                                      if slug and slug != 'anime':
+                                          links.append(f'{slug} | {text}')
                           
                           unique_links = list(dict.fromkeys(links))
                           if unique_links:
-                              # نعرض أول 40 نتيجة مباشرة في ملف التشخيص
                               result = '\n'.join(unique_links[:40])
                           else:
-                              result = f'NO_LINKS_FOUND | Page Title: {page.title()} | Content preview: {page_text[:100]}'
+                              result = f'NO_LINKS | Title: {page.title()}'
                   except Exception as e:
                       result = f'ERROR: {str(e)}'
 
@@ -101,10 +111,10 @@ jobs:
                   slug = os.getenv('SLUG', '')
                   episode = os.getenv('EPISODE', '1')
                   watch_url = f'https://animeblkom.net/watch/{slug}/{episode}'
-                  print(f'=== DEBUG Watch URL: {watch_url} ===')
+                  print(f'=== Stealth Watch: {watch_url} ===')
                   try:
-                      page.goto(watch_url, wait_until='domcontentloaded', timeout=60000)
-                      page.wait_for_timeout(5000)
+                      page.goto(watch_url, wait_until='networkidle', timeout=60000)
+                      page.wait_for_timeout(4000)
                       content = page.content()
                       
                       bk_links = re.findall(r'https?://[^\s\"\'<>]+bkvideo[^\s\"\'<>]+', content)
@@ -115,7 +125,7 @@ jobs:
                       if unique_streams:
                           result = '\n'.join(unique_streams)
                       else:
-                          result = f'NO_STREAMS | HTML snippet: {content[:200]}'
+                          result = 'NO_STREAMS_FOUND'
                   except Exception as e:
                       result = f'ERROR: {str(e)}'
 
@@ -130,5 +140,5 @@ jobs:
           git config --global user.name 'Anime Bot'
           git config --global user.email 'bot@github.com'
           git add api_result.txt
-          git commit -m "Update Debug API result" || exit 0
+          git commit -m "Update Stealth API result" || exit 0
           git push
