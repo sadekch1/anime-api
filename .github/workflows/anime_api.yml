@@ -36,7 +36,7 @@ jobs:
           playwright install chromium
           playwright install-deps chromium
 
-      - name: Run Strict Filtered Search Engine
+      - name: Run Clean Filtered Search Engine
         env:
           ACTION_TYPE: ${{ github.event.inputs.action }}
           QUERY: ${{ github.event.inputs.query }}
@@ -86,6 +86,11 @@ jobs:
                               page.goto(sq, timeout=30000)
                               page.wait_for_timeout(3000)
                               
+                              # التأكد أن الصفحة ليست صفحة حماية أو تحدي
+                              page_content = page.content()
+                              if 'Checking your browser' in page_content or 'cf_chl' in page_content:
+                                  continue
+
                               for a in page.query_selector_all('a'):
                                   href = a.get_attribute('href') or ''
                                   real_url = href
@@ -103,8 +108,21 @@ jobs:
                                           slug = parts[-1]
                                           text = a.inner_text().strip()
                                           
-                                          # فلتر صارم للغاية: يسمح فقط بالحروف الأنجليزية، الأرقام والشرطات
-                                          if re.match(r'^[a-zA-Z0-9\-_]{2,40}$', slug):
+                                          # قائمة الكلمات المحظورة التي يجب تجاهلها تماماً
+                                          blacklist = [
+                                              'cdn-cgi', 'chk_jschl', 'search', 'watch', 
+                                              'anime', 'show', 'login', 'register', 'tag'
+                                          ]
+                                          
+                                          is_clean = (
+                                              slug 
+                                              and slug not in blacklist 
+                                              and not slug.startswith('?') 
+                                              and not slug.startswith('__') 
+                                              and re.match(r'^[a-zA-Z0-9\-_]{3,40}$', slug)
+                                          )
+                                          
+                                          if is_clean:
                                               links.append(f'{slug} | {text or slug}')
                           except Exception as e:
                               print(f'Search error: {e}')
@@ -133,7 +151,7 @@ jobs:
                       
                       bk_links = re.findall(r'https?://[^\s\"\'<>]+bkvideo[^\s\"\'<>]+', content)
                       if not bk_links:
-                        bk_links = re.findall(r'https?://[^\s\"\'<>:]+\.mp4[^\s\"\'<>]*', content)
+                          bk_links = re.findall(r'https?://[^\s\"\'<>:]+\.mp4[^\s\"\'<>]*', content)
                           
                       unique_streams = list(set(bk_links))
                       if unique_streams:
@@ -155,5 +173,5 @@ jobs:
           git config --global user.name 'Anime Bot'
           git config --global user.email 'bot@github.com'
           git add api_result.txt
-          git commit -m "Update search with strict regex slug validation" || exit 0
+          git commit -m "Update search with advanced blacklist filtering" || exit 0
           git push
