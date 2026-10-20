@@ -1,0 +1,14 @@
+=== Starting search for query: bleach ===
+Trying DDG HTML: https://html.duckduckgo.com/html/?q=site%3Aanimeblkom.net%20bleach
+DDG Status Code: 200
+DDG Response snippet: <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<!--[if IE 6]><html class="ie6" xmlns="http://www.w3.org/1999/xhtml"><![endif]-->
+<!--[if IE 7]><html class="lt-ie8 lt-ie9" xmlns="http://www.w3.org/1999/xhtml"><![endif]-->
+<!--[if IE 8]><html class="lt-ie9" xmlns="http://www.
+Trying Bing: https://www.bing.com/search?q=site%3Aanimeblkom.net%20bleach
+Bing Status Code: 200
+Bing Response snippet: <!DOCTYPE html><html dir="ltr" lang="en" xml:lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:Web="http://schemas.live.com/Web/"><script type="text/javascript" nonce="8WAL0sHDdZZMcqMaE7xunYaLkstoljezWpJL6q+pHcc=" >"use strict";//<![CDATA[
+window.si_ST=new Date
+//]]></script><head><!--pc--><title>site:animeblkom.net bleach - Search</title><met
+Total unique links found: 0
